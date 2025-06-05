@@ -6,9 +6,14 @@ import utest._
 object ReaderDefaultsTests extends TestSuite {
 
   case class Data(x: Float, y: Float)
+
   case class Person(
-    @upickle.implicits.key("full-name") name: String,
-    @upickle.implicits.serializeDefaults(true) age: Option[Int] = Some(42),
+    @upickle.implicits.key("full-name")
+    name: String,
+
+    @upickle.implicits.serializeDefaults(true)
+    age: Option[Int] = Some(42),
+
     isStudent: Option[Boolean],
 
     @upickle.implicits.readerDefaults(false)
@@ -37,7 +42,7 @@ object ReaderDefaultsTests extends TestSuite {
   }
 
   val tests = Tests {
-    test("@readerDefaults(false) behavior") {
+    test("@readerDefaults behavior") {
       import Data._
       import Person._
 
@@ -47,8 +52,14 @@ object ReaderDefaultsTests extends TestSuite {
       val reconstructedPerson1 = read[Person](jsonWithAll)
       val reconstructedPerson2 = read[Person](jsonWithout)
 
-      println(s"Deserialized2 reconstructedPerson1: $reconstructedPerson1")
+      println(s"Deserialized1 reconstructedPerson1: $reconstructedPerson1")
       println(s"Deserialized2 reconstructedPerson2: $reconstructedPerson2")
+
+      // Serialize to JSON
+      val jsonString1 = write(reconstructedPerson1)
+      val jsonString2 = write(reconstructedPerson2)
+      println(s"Serialized1: $jsonString1")
+      println(s"Serialized1: $jsonString2")
 
       assert(reconstructedPerson1 == Person("Alice", Some(42), Some(false), true, 10, Seq(3,4,5), 1.0, Data(1,1)))
       assert(reconstructedPerson2 == Person("Alice", Some(42), Some(false), false, 1333, Seq(1,2,3), 2.99, Data(0.5,0.5)))
