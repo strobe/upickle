@@ -6,6 +6,7 @@ import scala.util.NotGiven
 import upickle.core.{Annotator, ObjVisitor, Visitor, Abort, CurrentlyDeriving}
 import upickle.implicits.BaseCaseObjectContext
 import scala.collection.mutable
+import scala.annotation.StaticAnnotation
 
 trait ReadersVersionSpecific
   extends MacrosCommon
@@ -205,6 +206,5 @@ trait ReadersVersionSpecific
       if (paramCount <= 64) new CaseObjectContext[T](paramCount) with ObjectContext
       else new HugeCaseObjectContext[T](paramCount) with ObjectContext
   }
-
 
 end ReadersVersionSpecific

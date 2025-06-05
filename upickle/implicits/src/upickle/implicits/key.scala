@@ -43,3 +43,17 @@ class allowUnknownKeys(b: Boolean) extends StaticAnnotation
  * - Cannot flatten more than two collections in a same level.
  */
 class flatten extends StaticAnnotation
+
+/**
+ * Annotation to specify a default value for a field during deserialization.
+ * This default will be used if the field is missing in the JSON.
+ *
+ * Example:
+ * {{{
+ * case class User(
+ *   @readerDefaults("Anonymous") name: String,
+ *   @readerDefaults(0) age: Int
+ * )
+ * }}}
+ */
+class readerDefaults(val defaultValue: Any) extends StaticAnnotation

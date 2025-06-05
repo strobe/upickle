@@ -50,6 +50,21 @@ private def extractSerializeDefaults[A](using quotes: Quotes)(sym: quotes.reflec
     .find(_.tpe =:= TypeRepr.of[upickle.implicits.serializeDefaults])
     .map{case Apply(_, Literal(BooleanConstant(s)) :: Nil) => s}
 
+/**
+  *  Getting the `@readerDefaults` annotation on a field symbol and extracting
+  *  its `defaultValue` argument as a `scala.quoted.Expr[Any]`
+  */
+private def extractReaderDefaults(using Quotes)(sym: quotes.reflect.Symbol): Option[Expr[Any]] =
+  import quotes.reflect._
+  sym
+    .annotations
+    .find(_.tpe =:= TypeRepr.of[upickle.implicits.readerDefaults])
+    .flatMap {
+      case Apply(_, List(arg)) => 
+        Some(arg.asExpr)
+      case _ => None
+    }
+
 private[upickle] inline def extractIgnoreUnknownKeys[T](): List[Boolean] = ${extractIgnoreUnknownKeysImpl[T]}
 def extractIgnoreUnknownKeysImpl[T](using Quotes, Type[T]): Expr[List[Boolean]] =
   import quotes.reflect._
@@ -72,7 +87,7 @@ private[upickle] inline def paramsCount[T]: Int = ${paramsCountImpl[T]}
 def paramsCountImpl[T](using Quotes, Type[T]) = {
   import quotes.reflect._
   val fields = allFields[T]
-  val count = fields.filter {case (_, _, _, _, flattenMap) => !flattenMap}.length
+  val count = fields.filter {case (_, _, _, _, isFlatten, _) => !isFlatten}.length
   Expr(count)
 }
 
@@ -80,7 +95,7 @@ private[upickle] inline def allReaders[T, R[_]]: (AnyRef, Array[AnyRef]) = ${all
 private def allReadersImpl[T, R[_]](using Quotes, Type[T], Type[R]): Expr[(AnyRef, Array[AnyRef])] = {
   import quotes.reflect._
   val fields = allFields[T]
-  val (readerMap, readers) = fields.partitionMap { case (_, _, tpe, _, isFlattenMap) =>
+  val (readerMap, readers) = fields.partitionMap { case (_, _, tpe, _, isFlattenMap, _) =>
     if (isFlattenMap) {
       val (_, valueTpe) = extractKeyValueTypes(tpe)
       val readerTpe = TypeRepr.of[R].appliedTo(valueTpe)
@@ -108,7 +123,7 @@ private def allReadersImpl[T, R[_]](using Quotes, Type[T], Type[R]): Expr[(AnyRe
 private[upickle] inline def allFieldsMappedName[T]: List[String] = ${allFieldsMappedNameImpl[T]}
 private def allFieldsMappedNameImpl[T](using Quotes, Type[T]): Expr[List[String]] = {
   import quotes.reflect._
-  Expr(allFields[T].map { case (_, label, _, _, _) => label })
+  Expr(allFields[T].map { case (_, label, _, _, _, _) => label })
 }
 
 private[upickle] inline def storeDefaults[T](inline x: upickle.implicits.BaseCaseObjectContext): Unit = ${storeDefaultsImpl[T]('x)}
@@ -117,26 +132,28 @@ private def storeDefaultsImpl[T](x: Expr[upickle.implicits.BaseCaseObjectContext
   val statements = allFields[T]
     .filter(!_._5)
     .zipWithIndex
-    .map { case ((_, _, _, default, _), i) =>
-      default match {
-        case Some(defaultValue) => '{${x}.storeValueIfNotFound(${Expr(i)}, ${defaultValue})}
-        case None => '{}
+    .map { case ((_, _, _, caseClassDefault, _, readerDefault), i) =>
+      (readerDefault, caseClassDefault) match {
+        case (Some(rDefault), _) => '{${x}.storeValueIfNotFound(${Expr(i)}, ${rDefault})}
+        case (None, Some(ccDefault)) => '{${x}.storeValueIfNotFound(${Expr(i)}, ${ccDefault})}
+        case _ => '{}
       }
     }
 
   Expr.block(statements, '{})
 }
 
-private def allFields[T](using Quotes, Type[T]): List[(quotes.reflect.Symbol, String, quotes.reflect.TypeRepr, Option[Expr[Any]], Boolean)] = {
+private def allFields[T](using Quotes, Type[T]): List[(quotes.reflect.Symbol, String, quotes.reflect.TypeRepr, Option[Expr[Any]], Boolean, Option[Expr[Any]])] = {
   import quotes.reflect._
 
-  def loop(field: Symbol, label: String, classTypeRepr: TypeRepr, defaults: Map[String, Expr[Object]]): List[(Symbol, String, TypeRepr, Option[Expr[Any]], Boolean)] = {
+  def loop(field: Symbol, label: String, classTypeRepr: TypeRepr, defaults: Map[String, Expr[Object]]): List[(Symbol, String, TypeRepr, Option[Expr[Any]], Boolean, Option[Expr[Any]])] = {
     val flatten = extractFlatten(field)
+    val readerDefault = extractReaderDefaults(field)
     val substitutedTypeRepr = substituteTypeArgs(classTypeRepr, subsitituted = classTypeRepr.memberType(field))
     val typeSymbol = substitutedTypeRepr.typeSymbol
     if (flatten) {
       if (isCollectionFlattenable(substitutedTypeRepr)) {
-        (field, label, substitutedTypeRepr, defaults.get(label), true) :: Nil
+        (field, label, substitutedTypeRepr, defaults.get(label), true, readerDefault) :: Nil
       }
       else if (isCaseClass(typeSymbol)) {
         typeSymbol.typeRef.dealias.asType match {
@@ -154,7 +171,7 @@ private def allFields[T](using Quotes, Type[T]): List[(quotes.reflect.Symbol, St
       }
     }
     else {
-      (field, label, substitutedTypeRepr, defaults.get(label), false) :: Nil
+      (field, label, substitutedTypeRepr, defaults.get(label), false, readerDefault) :: Nil
     }
   }
 
@@ -184,10 +201,10 @@ private def fieldLabelsImpl0[T](using Quotes, Type[T]): List[(quotes.reflect.Sym
 private[upickle] inline def keyToIndex[T](inline x: String): Int = ${keyToIndexImpl[T]('x)}
 private def keyToIndexImpl[T](x: Expr[String])(using Quotes, Type[T]): Expr[Int] = {
   import quotes.reflect.*
-  val fields = allFields[T].filter { case (_, _, _, _, isFlattenMap) => !isFlattenMap }
+  val fields = allFields[T].filter { case (_, _, _, _, isFlattenMap, _) => !isFlattenMap }
   val z = Match(
     x.asTerm,
-    fields.zipWithIndex.map{case ((_, label, _, _, _), i) =>
+    fields.zipWithIndex.map{case ((_, label, _, _, _, _), i) =>
       CaseDef(Literal(StringConstant(label)), None, Literal(IntConstant(i)))
     } ++ Seq(
       CaseDef(Wildcard(), None, Literal(IntConstant(-1)))
@@ -587,7 +604,7 @@ private def validateFlattenAnnotationImpl[T](using Quotes, Type[T]): Expr[Unit] 
   if (fields.count(_._5) > 1) {
     report.errorAndAbort("Only one collection can be annotated with @upickle.implicits.flatten in the same level")
   }
-  val duplicatedKeys = fields.map { case (_, mappedName, _, _, _) => mappedName }.groupBy(identity).collect { case (x, List(_, _, _*)) => x }
+  val duplicatedKeys = fields.map { case (_, mappedName, _, _, _, _) => mappedName }.groupBy(identity).collect { case (x, List(_, _, _*)) => x }
   if (duplicatedKeys.nonEmpty) {
     report.errorAndAbort(
       s"""There are multiple fields with the same key.
